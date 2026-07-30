@@ -1,0 +1,78 @@
+# Central configuration for the RL derivative hedging pipeline.
+# Every script (train.py, evaluate.py, sanity_check.py) reads this one file.
+# Nothing in src/ should hardcode a numeric constant that belongs here.
+
+market:
+  S0: 100.0          # initial underlying price
+  K: 100.0            # strike (ATM at inception)
+  r: 0.02             # risk-free rate (continuously compounded, annualized)
+  dt: 0.0039682539682 # 1/252, one trading day
+  n_steps: 21         # ~1 month to maturity at 21 trading days/month
+  prior_vol: 0.20      # seed value for the rolling realized-vol estimator
+  vol_window: 5        # trailing window (days) for realized-vol estimation
+
+# Three volatility regimes used for BOTH training (domain randomization,
+# sampled uniformly per episode) and evaluation (each regime scored separately).
+regimes:
+  gbm_low_vol:
+    type: gbm
+    mu: 0.02           # matches r: paths simulated under the pricing measure
+    sigma: 0.15
+    pricing_vol: 0.15  # vol used to compute the fair initial premium C_0
+
+  gbm_high_vol:
+    type: gbm
+    mu: 0.02
+    sigma: 0.40
+    pricing_vol: 0.40
+
+  heston:
+    type: heston
+    mu: 0.02
+    v0: 0.04           # initial variance -> sqrt(v0) = 20% initial vol
+    kappa: 2.0         # mean-reversion speed
+    theta: 0.04        # long-run variance level
+    xi: 0.35           # vol-of-vol
+    rho: -0.7           # spot/vol correlation (leverage effect)
+    pricing_vol: 0.20   # sqrt(v0), used for the initial BS premium
+
+hedging:
+  transaction_cost_rate: 0.0020   # 20 bps -- realistic-but-frictional, vs. the main
+                                   # config's 5bps. See README: this is the regime
+                                   # deep hedging is actually motivated by.
+  variance_penalty_lambda: 0.3    # risk-aversion coefficient on terminal PnL^2
+                                   # (raised from an initial 0.05: that run's
+                                   # policy was directionally correct -- delta
+                                   # increasing in moneyness -- but compressed
+                                   # toward 0.5 everywhere, e.g. ~0.83 instead of
+                                   # ~1.0 deep ITM. Too weak a risk signal
+                                   # relative to reward noise; see README)
+  static_baseline_vol: 0.20        # flat vol assumed by the "textbook" baseline
+
+training:
+  total_timesteps: 1800000  # ~8-9 min wall-clock on this sandbox's 1 CPU core
+                             # (measured ~3600 steps/sec steady-state); raised
+                             # 3x after the first (600k) run undertrained -- see README
+  rollout_len: 2048       # total transitions per PPO update, across all envs
+  n_envs: 16               # parallel env copies; batches JAX calls during rollout
+                           # collection (this sandbox has 1 CPU core, so this
+                           # amortizes per-step dispatch overhead rather than
+                           # giving true multiprocess speedup -- see README)
+  n_epochs: 6              # gradient epochs per rollout
+  n_minibatches: 8
+  learning_rate: 0.0007    # raised from 3e-4 for faster convergence given a
+                            # fixed compute/wall-clock budget
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.2
+  entropy_coef: 0.0015
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+  hidden_sizes: [32, 32]
+  log_std_init: -1.6      # softplus/exp(-1.6) ~= 0.2 initial action std
+  seed: 42
+  log_every_updates: 20
+
+evaluation:
+  n_eval_episodes: 3000
+  seed: 123
